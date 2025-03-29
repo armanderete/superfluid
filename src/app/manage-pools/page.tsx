@@ -7,14 +7,16 @@ import gdav1forwarderABI from '../../../abi/gdav1forwarderABI.json'; // adjust t
 // Define an interface for the PoolCreated event
 interface PoolCreatedEvent {
   event: string;
-  args: any[]; // Replace "any[]" with more specific types if available
+  args: any[]; // Replace with more specific types if available
 }
 
 function DistributionPoolManager() {
+  // General states
   const [tokenAddress, setTokenAddress] = useState('');
   const [adminAddress, setAdminAddress] = useState('');
   const [poolAddress, setPoolAddress] = useState('');
   const [memberAddress, setMemberAddress] = useState('');
+  const [claimWalletAddress, setClaimWalletAddress] = useState('');
   const [newUnits, setNewUnits] = useState('');
   const [distributionAmount, setDistributionAmount] = useState('');
   const [flowRateValue, setFlowRateValue] = useState('');
@@ -22,8 +24,19 @@ function DistributionPoolManager() {
   const [account, setAccount] = useState('');
   const [message, setMessage] = useState('');
 
+  // New states for manual flow distribution
+  const [flowTokenAddress, setFlowTokenAddress] = useState('');
+  const [flowFromAddress, setFlowFromAddress] = useState('');
+  const [flowPoolAddress, setFlowPoolAddress] = useState('');
+  const [flowRequestedRate, setFlowRequestedRate] = useState('');
+  const [flowUserData, setFlowUserData] = useState('0x');
+
   // Superfluid's GDAv1Forwarder address (same on all chains)
   const forwarderAddress = '0x6DA13Bde224A05a288748d857b9e7DDEffd1dE08';
+
+  // Basic validation function: Checks if an address string is non-empty and looks valid (starts with "0x")
+  const isValidAddress = (address: string) =>
+    address && address.startsWith("0x") && address.length === 42;
 
   // Connect Wallet function
   const connectWallet = async () => {
@@ -51,7 +64,15 @@ function DistributionPoolManager() {
   // Create a new distribution pool with manual gas estimation
   const createPool = async () => {
     if (!walletConnected) {
-      setMessage('Please connect your wallet first.');
+      window.alert('Please connect your wallet first.');
+      return;
+    }
+    if (!isValidAddress(tokenAddress)) {
+      window.alert("Please enter a valid Token Address.");
+      return;
+    }
+    if (!isValidAddress(adminAddress)) {
+      window.alert("Please enter a valid Admin Address.");
       return;
     }
     try {
@@ -59,18 +80,15 @@ function DistributionPoolManager() {
       const signer = provider.getSigner();
       const forwarderContract = new ethers.Contract(forwarderAddress, gdav1forwarderABI, signer);
 
-      // Basic pool configuration
       const config = {
-        transferabilityForUnitsOwner: false, // Pool units are non-transferable
-        distributionFromAnyAddress: true    
+        transferabilityForUnitsOwner: false,
+        distributionFromAnyAddress: true,
       };
 
-      // Estimate gas, add a 20% buffer, and get current gas price
       const estimatedGas = await forwarderContract.estimateGas.createPool(tokenAddress, adminAddress, config);
-      const gasLimit = estimatedGas.mul(120).div(100); // adding 20% buffer
+      const gasLimit = estimatedGas.mul(120).div(100);
       const gasPrice = await provider.getGasPrice();
 
-      // Create pool with gas options
       const tx = await forwarderContract.createPool(
         tokenAddress,
         adminAddress,
@@ -79,54 +97,80 @@ function DistributionPoolManager() {
       );
       const receipt = await tx.wait();
 
-      // Look for the PoolCreated event in the transaction receipt
       const poolCreatedEvent = receipt.events.find((e: PoolCreatedEvent) => e.event === 'PoolCreated');
       if (poolCreatedEvent) {
         const [, createdPoolAddress] = poolCreatedEvent.args;
         setPoolAddress(createdPoolAddress);
         setMessage(`Pool created successfully at ${createdPoolAddress}`);
+        window.alert(`Pool created successfully at ${createdPoolAddress}`);
       } else {
         setMessage('Pool creation event not found.');
+        window.alert('Pool creation event not found.');
       }
     } catch (error) {
       console.error('Error creating pool:', error);
       setMessage('Failed to create pool. Please try again.');
+      window.alert('Failed to create pool. Please try again.');
     }
   };
 
   // Update member units in the distribution pool
   const updateMemberUnits = async () => {
     if (!walletConnected) {
-      setMessage('Please connect your wallet first.');
+      window.alert('Please connect your wallet first.');
+      return;
+    }
+    if (!isValidAddress(poolAddress)) {
+      window.alert("Please enter a valid Pool Address.");
+      return;
+    }
+    if (!isValidAddress(memberAddress)) {
+      window.alert("Please enter a valid Member Address.");
+      return;
+    }
+    if (!newUnits) {
+      window.alert("Please enter the new units value.");
       return;
     }
     try {
       const provider = new ethers.providers.Web3Provider(window.ethereum);
       const signer = provider.getSigner();
       const forwarderContract = new ethers.Contract(forwarderAddress, gdav1forwarderABI, signer);
-
       const tx = await forwarderContract.updateMemberUnits(poolAddress, memberAddress, newUnits, "0x");
       await tx.wait();
       setMessage('Member units updated successfully!');
+      window.alert('Member units updated successfully!');
     } catch (error) {
       console.error('Error updating member units:', error);
       setMessage('Failed to update member units. Please try again.');
+      window.alert('Failed to update member units. Please try again.');
     }
   };
 
   // Instant distribution of tokens to pool members proportional to their current units
   const distributeTokens = async () => {
     if (!walletConnected) {
-      setMessage('Please connect your wallet first.');
+      window.alert('Please connect your wallet first.');
+      return;
+    }
+    if (!isValidAddress(tokenAddress)) {
+      window.alert("Please enter a valid Token Address.");
+      return;
+    }
+    if (!isValidAddress(poolAddress)) {
+      window.alert("Please enter a valid Pool Address.");
+      return;
+    }
+    if (!distributionAmount) {
+      window.alert("Please enter a distribution amount.");
       return;
     }
     try {
       const provider = new ethers.providers.Web3Provider(window.ethereum);
       const signer = provider.getSigner();
       const forwarderContract = new ethers.Contract(forwarderAddress, gdav1forwarderABI, signer);
-      // Convert distribution amount to a BigNumber (assume token has 18 decimals)
       const amountBN = ethers.utils.parseUnits(distributionAmount, 18);
-      const tx = await forwarderContract.distribute(amountBN);
+      const tx = await forwarderContract.distribute(tokenAddress, account, poolAddress, amountBN, "0x");
       await tx.wait();
       setMessage('Tokens distributed successfully!');
       window.alert('Tokens distributed successfully!');
@@ -137,33 +181,60 @@ function DistributionPoolManager() {
     }
   };
 
-  // Flow distribution of tokens to pool members proportional to their current units
-  const distributeFlowTokens = async () => {
+  // Flow distribution of tokens to pool members proportional to their current units using manual inputs
+  const manualDistributeFlowTokens = async () => {
     if (!walletConnected) {
-      setMessage('Please connect your wallet first.');
+      window.alert('Please connect your wallet first.');
       return;
     }
+    if (!isValidAddress(flowTokenAddress)) {
+      window.alert("Please enter a valid Flow Token Address.");
+      return;
+    }
+    if (!isValidAddress(flowFromAddress)) {
+      window.alert("Please enter a valid From Address for flow distribution.");
+      return;
+    }
+    if (!isValidAddress(flowPoolAddress)) {
+      window.alert("Please enter a valid Pool Address for flow distribution.");
+      return;
+    }
+    if (!flowRequestedRate) {
+      window.alert("Please enter a flow rate value.");
+      return;
+    }
+    // userData is optional; we already have a default
     try {
       const provider = new ethers.providers.Web3Provider(window.ethereum);
       const signer = provider.getSigner();
       const forwarderContract = new ethers.Contract(forwarderAddress, gdav1forwarderABI, signer);
-      // Convert flowRateValue to an integer (assuming it's entered as a string number)
-      const flowRateInt = parseInt(flowRateValue);
-      const tx = await forwarderContract.distributeFlow(flowRateInt);
+      const requestedFlowRate = parseInt(flowRequestedRate);
+      const tx = await forwarderContract.distributeFlow(
+        flowTokenAddress,
+        flowFromAddress,
+        flowPoolAddress,
+        requestedFlowRate,
+        flowUserData
+      );
       await tx.wait();
-      setMessage('Flow distribution updated successfully!');
-      window.alert('Flow distribution updated successfully!');
+      setMessage('Manual flow distribution updated successfully!');
+      window.alert('Manual flow distribution updated successfully!');
     } catch (error) {
-      console.error('Error updating flow distribution:', error);
-      setMessage('Failed to update flow distribution. Please try again.');
-      window.alert('Failed to update flow distribution. Please try again.');
+      console.error('Error updating manual flow distribution:', error);
+      setMessage('Failed to update manual flow distribution. Please try again.');
+      window.alert('Failed to update manual flow distribution. Please try again.');
     }
   };
 
-  // Function to perform connect, disconnect, and claim actions
+  // Function to perform connect, disconnect, and claim actions.
+  // Modified claim: uses the manually entered claimWalletAddress to claim tokens on behalf of a user.
   const performAction = async (action: 'connect' | 'disconnect' | 'claim') => {
     if (!walletConnected) {
       window.alert('Please connect your wallet first.');
+      return;
+    }
+    if (!isValidAddress(poolAddress)) {
+      window.alert("Please enter a valid Pool Address.");
       return;
     }
     try {
@@ -174,7 +245,6 @@ function DistributionPoolManager() {
       switch (action) {
         case 'connect': {
           const targetAddress = memberAddress || account;
-          // Encode targetAddress into userData
           const userData = ethers.utils.defaultAbiCoder.encode(["address"], [targetAddress]);
           tx = await contract.connectPool(poolAddress, userData);
           break;
@@ -183,7 +253,11 @@ function DistributionPoolManager() {
           tx = await contract.disconnectPool(poolAddress, "0x");
           break;
         case 'claim':
-          tx = await contract.claimAll(poolAddress, memberAddress || account, "0x");
+          if (!claimWalletAddress || !isValidAddress(claimWalletAddress)) {
+            window.alert("Please enter a valid wallet address to claim on behalf of.");
+            return;
+          }
+          tx = await contract.claimAll(poolAddress, claimWalletAddress, "0x");
           break;
       }
       await tx.wait();
@@ -315,16 +389,41 @@ function DistributionPoolManager() {
         </button>
       </div>
 
+      {/* Manual Flow Distribution Section */}
       <div style={{ marginTop: '20px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>Distribute Flow</h2>
+        <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>Manual Flow Distribution</h2>
         <input
-          placeholder="Flow Rate (int96)"
-          value={flowRateValue}
-          onChange={(e) => setFlowRateValue(e.target.value)}
+          placeholder="Flow Token Address"
+          value={flowTokenAddress}
+          onChange={(e) => setFlowTokenAddress(e.target.value)}
+          style={{ width: '100%', padding: '10px', margin: '10px 0' }}
+        />
+        <input
+          placeholder="From Address"
+          value={flowFromAddress}
+          onChange={(e) => setFlowFromAddress(e.target.value)}
+          style={{ width: '100%', padding: '10px', margin: '10px 0' }}
+        />
+        <input
+          placeholder="Pool Address"
+          value={flowPoolAddress}
+          onChange={(e) => setFlowPoolAddress(e.target.value)}
+          style={{ width: '100%', padding: '10px', margin: '10px 0' }}
+        />
+        <input
+          placeholder="Requested Flow Rate (int96)"
+          value={flowRequestedRate}
+          onChange={(e) => setFlowRequestedRate(e.target.value)}
+          style={{ width: '100%', padding: '10px', margin: '10px 0' }}
+        />
+        <input
+          placeholder="User Data (bytes, default 0x)"
+          value={flowUserData}
+          onChange={(e) => setFlowUserData(e.target.value)}
           style={{ width: '100%', padding: '10px', margin: '10px 0' }}
         />
         <button
-          onClick={distributeFlowTokens}
+          onClick={manualDistributeFlowTokens}
           style={{
             backgroundColor: 'orange',
             color: 'white',
@@ -335,7 +434,7 @@ function DistributionPoolManager() {
             width: '100%'
           }}
         >
-          Update Flow Distribution
+          Manual Distribute Flow
         </button>
       </div>
       
@@ -371,6 +470,14 @@ function DistributionPoolManager() {
           >
             Disconnect from Pool
           </button>
+        </div>
+        <div style={{ marginBottom: '10px' }}>
+          <input
+            placeholder="Claim Wallet Address"
+            value={claimWalletAddress}
+            onChange={(e) => setClaimWalletAddress(e.target.value)}
+            style={{ width: '100%', padding: '10px', margin: '10px 0' }}
+          />
         </div>
         <button
           onClick={() => performAction('claim')}
